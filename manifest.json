@@ -1,0 +1,25 @@
+{
+  "name": "Bloop — your bouncy blob buddy",
+  "short_name": "Bloop",
+  "description": "A cute cyan blob AI buddy that lives in your browser",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0a1116",
+  "background_color": "#0a1116",
+  "categories": ["entertainment", "utilities"],
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><defs><radialGradient id='g' cx='35%25' cy='30%25'><stop offset='0%25' stop-color='%23b9f6ff'/><stop offset='36%25' stop-color='%234de2f7'/><stop offset='72%25' stop-color='%2317b8d8'/><stop offset='100%25' stop-color='%230d8fae'/></radialGradient></defs><ellipse cx='256' cy='270' rx='200' ry='185' fill='url(%23g)'/><ellipse cx='195' cy='240' rx='22' ry='28' fill='%2306222c'/><ellipse cx='317' cy='240' rx='22' ry='28' fill='%2306222c'/><ellipse cx='256' cy='310' rx='30' ry='18' fill='%2306222c' rx='30'/></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><defs><radialGradient id='g' cx='35%25' cy='30%25'><stop offset='0%25' stop-color='%23b9f6ff'/><stop offset='36%25' stop-color='%234de2f7'/><stop offset='72%25' stop-color='%2317b8d8'/><stop offset='100%25' stop-color='%230d8fae'/></radialGradient></defs><ellipse cx='256' cy='270' rx='200' ry='185' fill='url(%23g)'/><ellipse cx='195' cy='240' rx='22' ry='28' fill='%2306222c'/><ellipse cx='317' cy='240' rx='22' ry='28' fill='%2306222c'/><ellipse cx='256' cy='310' rx='30' ry='18' fill='%2306222c' rx='30'/></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
