@@ -1,0 +1,1534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a1116">
+<title>Bloop — your bouncy blob buddy</title>
+<style>
+/* ============================================================
+   BLOOP — a cute cyan blob AI buddy
+   Single-file app: styles, markup, and logic all live here.
+   ============================================================ */
+
+/* ---------- Design tokens ---------- */
+:root {
+  --bg:         #0a1116;
+  --bg-soft:    #0e1720;
+  --panel:      #111c26;
+  --panel-2:    #16232f;
+  --border:     #1e3340;
+  --cyan:       #22d3ee;
+  --cyan-hi:    #7deeff;
+  --cyan-deep:  #0e97b5;
+  --text:       #e7f6fb;
+  --text-dim:   #8fb2bf;
+  --user-bub:   #1d4d5e;
+  --ai-bub:     #152633;
+  --danger:     #ff6b81;
+  --radius:     18px;
+  --glow:       0.35;        /* blob glow intensity, driven by JS  */
+  --squish-x:   1;           /* blob squish, driven by JS          */
+  --squish-y:   1;
+  --mouth-open: 0.15;        /* 0..1 mouth openness, driven by JS  */
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+
+body {
+  background:
+    radial-gradient(1100px 600px at 50% -10%, #10222e 0%, transparent 60%),
+    radial-gradient(900px 500px at 90% 110%, #0d1e28 0%, transparent 55%),
+    var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+/* ---------- App layout ---------- */
+#app {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 14px env(safe-area-inset-bottom);
+}
+
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 4px 8px;
+  flex: 0 0 auto;
+}
+#logo { display: flex; align-items: center; gap: 11px; }
+#logo .mini-blob {
+  position: relative;
+  width: 34px; height: 31px; display: inline-block;
+  background: radial-gradient(circle at 35% 30%, var(--cyan-hi), var(--cyan) 55%, var(--cyan-deep));
+  border-radius: 48% 52% 55% 45% / 55% 50% 50% 45%;
+  box-shadow: 0 0 14px rgba(34,211,238,.55), inset 3px 4px 6px rgba(255,255,255,.35);
+  animation: logo-wobble 3.2s ease-in-out infinite;
+}
+/* tiny face on the logo blob */
+#logo .mini-blob::before, #logo .mini-blob::after {
+  content: ""; position: absolute; top: 38%;
+  width: 5px; height: 6px; border-radius: 50%;
+  background: #06222c;
+}
+#logo .mini-blob::before { left: 26%; }
+#logo .mini-blob::after  { right: 26%; }
+#logo .mini-blob .smile {
+  position: absolute; left: 50%; top: 58%;
+  width: 9px; height: 5px;
+  transform: translateX(-50%);
+  border-radius: 0 0 9px 9px;
+  background: #06222c;
+}
+@keyframes logo-wobble {
+  0%, 100% { transform: rotate(-4deg) translateY(0); }
+  50%      { transform: rotate(4deg) translateY(-2px); }
+}
+#logo .wordmark { display: flex; flex-direction: column; line-height: 1.05; }
+#logo .word {
+  font-weight: 800; font-size: 1.45rem; letter-spacing: .02em;
+  background: linear-gradient(100deg, var(--cyan-hi) 0%, var(--cyan) 45%, #4da8ff 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  text-shadow: 0 0 22px rgba(34,211,238,.35);
+}
+#logo .tagline { font-size: .62rem; color: var(--text-dim); letter-spacing: .14em; text-transform: uppercase; }
+
+.icon-btn {
+  width: 42px; height: 42px; border-radius: 12px;
+  display: grid; place-items: center;
+  background: var(--panel); border: 1px solid var(--border);
+  transition: background .2s, transform .15s;
+}
+.icon-btn:hover { background: var(--panel-2); }
+.icon-btn:active { transform: scale(.93); }
+.icon-btn svg { width: 20px; height: 20px; fill: var(--text-dim); }
+.icon-btn:hover svg { fill: var(--cyan); }
+
+main {
+  flex: 1 1 auto;
+  min-height: 0;                 /* allow chat to shrink & scroll */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ============================================================
+   THE BLOB
+   Layers: #stage > #blob-wrap (idle float / thinking bounce)
+           > #blob (squish transform + morphing shape)
+           > face parts. #glow sits behind, #blob-shadow below.
+   ============================================================ */
+#stage {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; align-items: center;
+  padding-top: 6px;
+  user-select: none;
+}
+
+#blob-area { position: relative; width: 200px; height: 200px; }
+
+#glow {
+  position: absolute; inset: -30%;
+  background: radial-gradient(circle, rgba(34,211,238,.55) 0%, rgba(34,211,238,.12) 45%, transparent 70%);
+  filter: blur(6px);
+  opacity: var(--glow);
+  transform: scale(calc(0.85 + var(--glow) * 0.35));
+  transition: opacity .25s;
+  pointer-events: none;
+}
+
+#blob-wrap {
+  position: absolute; inset: 0;
+  animation: idle-float 4.2s ease-in-out infinite;
+}
+/* Thinking: quicker springy bounce instead of the slow float */
+body[data-state="thinking"] #blob-wrap { animation: think-bounce .7s ease-in-out infinite; }
+/* Listening: hold steady so the mic-driven squish reads clearly */
+body[data-state="listening"] #blob-wrap { animation: none; }
+
+#blob {
+  position: absolute; inset: 0;
+  background: radial-gradient(circle at 33% 27%, #b9f6ff 0%, #4de2f7 36%, #17b8d8 72%, #0d8fae 100%);
+  border-radius: 46% 54% 52% 48% / 50% 46% 54% 50%;
+  animation: morph 7s ease-in-out infinite;
+  box-shadow:
+    inset -14px -18px 34px rgba(2, 46, 64, .35),
+    inset 12px 14px 26px rgba(255, 255, 255, .28);
+  transform: scale(var(--squish-x), var(--squish-y));
+  transform-origin: 50% 85%;      /* squish from the bottom, like jelly */
+}
+
+/* Speaking: gentle body bob synced (roughly) with the voice */
+body[data-state="speaking"] #blob { animation: morph 7s ease-in-out infinite, talk-bob .32s ease-in-out infinite; }
+
+#blob-shadow {
+  position: absolute; left: 50%; bottom: -26px;
+  width: 130px; height: 22px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse, rgba(0,0,0,.45) 0%, transparent 70%);
+  animation: shadow-pulse 4.2s ease-in-out infinite;
+}
+
+/* ---------- Face ---------- */
+.eye {
+  position: absolute; top: 34%;
+  width: 13%; height: 17%;
+  background: #06222c;
+  border-radius: 50%;
+  transition: transform .25s;
+}
+.eye::after {              /* little white shine */
+  content: ""; position: absolute; top: 15%; left: 20%;
+  width: 34%; height: 30%; border-radius: 50%;
+  background: rgba(255,255,255,.9);
+}
+.eye.left  { left: 26%; }
+.eye.right { right: 26%; }
+.eye.blink { transform: scaleY(.08) !important; transition: transform .07s; }
+
+/* Attentive eyes while listening; happy squint while speaking */
+body[data-state="listening"] .eye { transform: scale(1.18); }
+body[data-state="speaking"]  .eye { transform: scaleY(.75); border-radius: 50% 50% 40% 40%; }
+
+#mouth {
+  position: absolute; left: 50%; top: 58%;
+  width: 21%;
+  height: calc(6% + var(--mouth-open) * 16%);
+  transform: translateX(-50%) ;
+  background: #06222c;
+  border-radius: 30% 30% 50% 50% / 22% 22% 100% 100%;
+  transition: border-radius .2s;
+}
+#mouth::after {            /* tongue, peeks out when mouth opens wide */
+  content: ""; position: absolute; left: 20%; right: 20%; bottom: 8%;
+  height: 40%;
+  border-radius: 50% 50% 40% 40%;
+  background: #ff8fa3;
+  opacity: calc((var(--mouth-open) - 0.35) * 2);
+}
+body[data-state="listening"] #mouth { border-radius: 50%; width: 12%; }
+
+.cheek {
+  position: absolute; top: 52%;
+  width: 12%; height: 7%;
+  background: rgba(255, 150, 190, .35);
+  border-radius: 50%;
+  filter: blur(2px);
+}
+.cheek.left { left: 14%; } .cheek.right { right: 14%; }
+
+/* ---------- Blob keyframes ---------- */
+@keyframes idle-float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-12px); }
+}
+@keyframes think-bounce {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  35%      { transform: translateY(-14px) scale(.96, 1.05); }
+  65%      { transform: translateY(0) scale(1.04, .95); }
+}
+@keyframes talk-bob {
+  0%, 100% { transform: scale(var(--squish-x), var(--squish-y)) translateY(0); }
+  50%      { transform: scale(var(--squish-x), var(--squish-y)) translateY(-3px); }
+}
+@keyframes morph {
+  0%, 100% { border-radius: 46% 54% 52% 48% / 50% 46% 54% 50%; }
+  33%      { border-radius: 53% 47% 45% 55% / 46% 55% 45% 54%; }
+  66%      { border-radius: 47% 53% 56% 44% / 55% 47% 53% 45%; }
+}
+@keyframes shadow-pulse {
+  0%, 100% { transform: translateX(-50%) scale(1);   opacity: .9; }
+  50%      { transform: translateX(-50%) scale(.82); opacity: .6; }
+}
+
+/* ---------- Status line & live transcript ---------- */
+#status {
+  margin-top: 30px;
+  min-height: 1.4em;
+  font-size: .95rem;
+  color: var(--text-dim);
+  display: flex; align-items: center; gap: 6px;
+}
+#status.active { color: var(--cyan); }
+#status .dots span {
+  display: inline-block; width: 5px; height: 5px; margin-left: 4px;
+  border-radius: 50%; background: var(--cyan);
+  animation: dot 1.2s infinite;
+}
+#status .dots span:nth-child(2) { animation-delay: .2s; }
+#status .dots span:nth-child(3) { animation-delay: .4s; }
+@keyframes dot { 0%, 60%, 100% { transform: translateY(0); opacity: .4; } 30% { transform: translateY(-5px); opacity: 1; } }
+
+#transcript {
+  margin-top: 8px;
+  max-width: 90%;
+  padding: 8px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  font-size: .9rem;
+  color: var(--cyan-hi);
+  font-style: italic;
+  text-align: center;
+}
+#transcript[hidden] { display: none; }
+
+/* ============================================================
+   CHAT PANEL
+   ============================================================ */
+#chat-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex; flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  overflow: hidden;
+}
+
+#chat {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex; flex-direction: column; gap: 10px;
+  scroll-behavior: smooth;
+  overscroll-behavior: contain;
+}
+#chat::-webkit-scrollbar { width: 8px; }
+#chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+.msg {
+  max-width: 82%;
+  padding: 10px 14px;
+  border-radius: 16px;
+  line-height: 1.45;
+  font-size: .95rem;
+  word-wrap: break-word;
+  white-space: pre-wrap;      /* keeps line breaks & code indentation */
+  animation: msg-in .25s ease-out;
+}
+@keyframes msg-in { from { opacity: 0; transform: translateY(8px) scale(.97); } to { opacity: 1; transform: none; } }
+.msg.user { align-self: flex-end; background: var(--user-bub); border-bottom-right-radius: 5px; }
+.msg.ai   { align-self: flex-start; background: var(--ai-bub); border: 1px solid var(--border); border-bottom-left-radius: 5px; }
+.msg.ai.offline::before {
+  content: "offline mode";
+  display: block; font-size: .68rem; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px;
+}
+
+#empty-hint {
+  margin: auto; text-align: center; color: var(--text-dim); font-size: .92rem; line-height: 1.7;
+}
+#empty-hint b { color: var(--cyan); }
+
+/* ---------- Composer ---------- */
+#composer {
+  flex: 0 0 auto;
+  display: flex; gap: 8px; align-items: center;
+  padding: 10px;
+  background: var(--panel-2);
+  border-top: 1px solid var(--border);
+}
+#text-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 48px;
+  padding: 0 16px;
+  border-radius: 24px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: 16px;               /* prevents iOS zoom-on-focus */
+}
+#text-input::placeholder { color: var(--text-dim); }
+
+.round-btn {
+  flex: 0 0 auto;
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  transition: transform .15s, background .2s, box-shadow .2s;
+}
+.round-btn:active { transform: scale(.9); }
+.round-btn svg { width: 22px; height: 22px; }
+
+#mic-btn { background: var(--bg-soft); border: 1px solid var(--border); }
+#mic-btn svg { fill: var(--text-dim); }
+#mic-btn:hover svg { fill: var(--cyan); }
+#mic-btn.recording {
+  background: var(--cyan);
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 0 rgba(34,211,238,.5);
+  animation: mic-pulse 1.4s infinite;
+}
+#mic-btn.recording svg { fill: #06222c; }
+#mic-btn.unsupported { opacity: .4; }
+@keyframes mic-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(34,211,238,.45); }
+  70%  { box-shadow: 0 0 0 14px rgba(34,211,238,0); }
+  100% { box-shadow: 0 0 0 0 rgba(34,211,238,0); }
+}
+
+#send-btn { background: var(--cyan); }
+#send-btn svg { fill: #06222c; margin-left: 2px; }
+#send-btn:disabled { background: var(--border); cursor: not-allowed; }
+#send-btn:disabled svg { fill: var(--text-dim); }
+
+/* ============================================================
+   SETTINGS PANEL (slide-up sheet)
+   ============================================================ */
+#settings-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, .55);
+  opacity: 0; pointer-events: none;
+  transition: opacity .25s;
+  z-index: 40;
+}
+#settings-panel {
+  position: fixed; left: 50%; bottom: 0;
+  width: min(480px, 100%);
+  transform: translate(-50%, 105%);
+  transition: transform .3s cubic-bezier(.3, 1.1, .4, 1);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 22px 22px 0 0;
+  padding: 20px 22px calc(24px + env(safe-area-inset-bottom));
+  z-index: 50;
+}
+body.settings-open #settings-backdrop { opacity: 1; pointer-events: auto; }
+body.settings-open #settings-panel { transform: translate(-50%, 0); }
+
+#settings-panel h2 { font-size: 1.05rem; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+.setting-row:last-of-type { border-bottom: none; }
+.setting-row label { font-size: .95rem; }
+.setting-row small { display: block; color: var(--text-dim); font-size: .78rem; margin-top: 2px; }
+
+/* Toggle switch */
+.switch { position: relative; width: 48px; height: 28px; flex: 0 0 auto; }
+.switch input { opacity: 0; width: 100%; height: 100%; position: absolute; margin: 0; cursor: pointer; z-index: 1; }
+.switch .track {
+  position: absolute; inset: 0;
+  background: var(--bg-soft); border: 1px solid var(--border);
+  border-radius: 14px; transition: background .2s;
+}
+.switch .track::after {
+  content: ""; position: absolute; top: 3px; left: 3px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--text-dim); transition: transform .2s, background .2s;
+}
+.switch input:checked + .track { background: rgba(34,211,238,.25); border-color: var(--cyan); }
+.switch input:checked + .track::after { transform: translateX(20px); background: var(--cyan); }
+
+#voice-select, #groq-key {
+  max-width: 55%;
+  padding: 8px 10px;
+  background: var(--bg-soft); color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px;
+  font-size: .85rem;
+}
+#groq-key { width: 55%; }
+#groq-key::placeholder { color: var(--text-dim); }
+
+#clear-chat-btn {
+  margin-top: 16px; width: 100%;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 107, 129, .12);
+  border: 1px solid rgba(255, 107, 129, .4);
+  color: var(--danger);
+  font-weight: 600;
+  transition: background .2s;
+}
+#clear-chat-btn:hover { background: rgba(255, 107, 129, .22); }
+#settings-about { margin-top: 14px; text-align: center; color: var(--text-dim); font-size: .75rem; }
+
+/* ============================================================
+   AUTH SCREEN (client-side accounts, stored in this browser)
+   ============================================================ */
+#auth-screen {
+  position: fixed; inset: 0;
+  background:
+    radial-gradient(900px 500px at 50% -10%, #10222e 0%, transparent 60%),
+    var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+  padding: 20px;
+  transition: opacity .4s, visibility .4s;
+}
+#auth-screen.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+
+#auth-card {
+  width: min(380px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  padding: 30px 26px;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0,0,0,.5);
+}
+#auth-blob {
+  position: relative;
+  width: 74px; height: 68px; margin: 0 auto 10px;
+  background: radial-gradient(circle at 35% 30%, var(--cyan-hi), var(--cyan) 55%, var(--cyan-deep));
+  border-radius: 48% 52% 55% 45% / 55% 50% 50% 45%;
+  box-shadow: 0 0 26px rgba(34,211,238,.5), inset 5px 7px 12px rgba(255,255,255,.32);
+  animation: idle-float 3.4s ease-in-out infinite;
+}
+#auth-blob::before, #auth-blob::after {
+  content: ""; position: absolute; top: 37%;
+  width: 10px; height: 12px; border-radius: 50%; background: #06222c;
+}
+#auth-blob::before { left: 27%; } #auth-blob::after { right: 27%; }
+#auth-blob .smile {
+  position: absolute; left: 50%; top: 57%;
+  width: 18px; height: 9px; transform: translateX(-50%);
+  border-radius: 0 0 18px 18px; background: #06222c;
+}
+#auth-card h1 { font-size: 1.35rem; margin-bottom: 4px; }
+#auth-card .sub { color: var(--text-dim); font-size: .88rem; margin-bottom: 20px; }
+
+#auth-form { display: flex; flex-direction: column; gap: 10px; }
+#auth-form input {
+  height: 48px; padding: 0 16px;
+  border-radius: 13px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft); color: var(--text);
+  font-size: 16px;
+}
+#auth-form input::placeholder { color: var(--text-dim); }
+#auth-submit {
+  height: 48px; margin-top: 4px;
+  border-radius: 13px;
+  background: var(--cyan); color: #06222c;
+  font-weight: 700; font-size: 1rem;
+  transition: transform .15s, filter .2s;
+}
+#auth-submit:hover { filter: brightness(1.1); }
+#auth-submit:active { transform: scale(.97); }
+#auth-error { color: var(--danger); font-size: .84rem; min-height: 1.2em; }
+#auth-toggle { margin-top: 14px; color: var(--text-dim); font-size: .88rem; }
+#auth-toggle button { color: var(--cyan); font-weight: 600; }
+#auth-note { margin-top: 16px; color: var(--text-dim); font-size: .72rem; line-height: 1.5; }
+
+#logout-btn {
+  padding: 8px 16px;
+  border-radius: 10px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: .85rem;
+  transition: color .2s, border-color .2s;
+}
+#logout-btn:hover { color: var(--danger); border-color: var(--danger); }
+
+/* ---------- Toast notifications ---------- */
+#toast {
+  position: fixed; left: 50%; bottom: 90px;
+  transform: translate(-50%, 20px);
+  max-width: min(90vw, 420px);
+  background: var(--panel-2);
+  border: 1px solid var(--cyan-deep);
+  color: var(--text);
+  padding: 11px 18px;
+  border-radius: 14px;
+  font-size: .88rem;
+  text-align: center;
+  opacity: 0; pointer-events: none;
+  transition: opacity .25s, transform .25s;
+  z-index: 60;
+  box-shadow: 0 8px 30px rgba(0,0,0,.4);
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ============================================================
+   RESPONSIVE: side-by-side on wide screens
+   ============================================================ */
+@media (min-width: 900px) {
+  #app { max-width: 1060px; }
+  main { flex-direction: row; align-items: stretch; gap: 24px; padding-bottom: 16px; }
+  #stage { flex: 0 0 380px; justify-content: center; }
+  #blob-area { width: 250px; height: 250px; }
+  #chat-panel { border-radius: var(--radius); }
+}
+/* Short phones in landscape: shrink the blob so chat stays usable */
+@media (max-height: 620px) {
+  #blob-area { width: 130px; height: 130px; }
+  #status { margin-top: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #blob-wrap, #blob, #blob-shadow { animation: none !important; }
+}
+</style>
+</head>
+<body data-state="idle">
+
+<div id="app">
+  <header>
+    <div id="logo">
+      <span class="mini-blob"><span class="smile"></span></span>
+      <span class="wordmark">
+        <span class="word">Bloop</span>
+        <span class="tagline">your blob buddy</span>
+      </span>
+    </div>
+    <button id="settings-btn" class="icon-btn" aria-label="Settings" title="Settings">
+      <svg viewBox="0 0 24 24"><path d="M19.4 13a7.9 7.9 0 0 0 .1-1 7.9 7.9 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.6l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1l-.4-2.6a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.6a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.6L4.5 11a7.9 7.9 0 0 0-.1 1 7.9 7.9 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.6l2 3.5c.1.2.4.3.6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.6c0 .2.2.4.5.4h4c.2 0 .4-.2.5-.4l.4-2.6a7.6 7.6 0 0 0 1.7-1l2.5 1c.2.1.5 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.6L19.4 13zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>
+    </button>
+  </header>
+
+  <main>
+    <!-- ================= BLOB STAGE ================= -->
+    <section id="stage">
+      <div id="blob-area">
+        <div id="glow"></div>
+        <div id="blob-wrap">
+          <div id="blob">
+            <div class="eye left"></div>
+            <div class="eye right"></div>
+            <div class="cheek left"></div>
+            <div class="cheek right"></div>
+            <div id="mouth"></div>
+          </div>
+        </div>
+        <div id="blob-shadow"></div>
+      </div>
+      <div id="status">Hi, I'm Bloop! 💙</div>
+      <div id="transcript" hidden></div>
+    </section>
+
+    <!-- ================= CHAT ================= -->
+    <section id="chat-panel">
+      <div id="chat" aria-live="polite">
+        <div id="empty-hint">
+          Say hi to <b>Bloop</b>! 👋<br>
+          Type a message or tap the mic to talk.
+        </div>
+      </div>
+
+      <form id="composer" autocomplete="off">
+        <button type="button" id="mic-btn" class="round-btn" aria-label="Talk to Bloop" title="Talk to Bloop">
+          <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5.3-3a5.3 5.3 0 0 1-10.6 0H5a7 7 0 0 0 6 6.9V22h2v-3.1a7 7 0 0 0 6-6.9h-1.7z"/></svg>
+        </button>
+        <input id="text-input" type="text" placeholder="Message Bloop…" maxlength="500" aria-label="Message Bloop">
+        <button type="submit" id="send-btn" class="round-btn" aria-label="Send" title="Send">
+          <svg viewBox="0 0 24 24"><path d="M3 20.5v-6l9-2.5-9-2.5v-6L21.5 12 3 20.5z"/></svg>
+        </button>
+      </form>
+    </section>
+  </main>
+</div>
+
+<!-- ================= SETTINGS ================= -->
+<div id="settings-backdrop"></div>
+<div id="settings-panel" role="dialog" aria-label="Settings">
+  <h2>⚙️ Settings</h2>
+
+  <div class="setting-row">
+    <label for="opt-voice">Voice replies<small>Bloop reads answers out loud</small></label>
+    <span class="switch"><input type="checkbox" id="opt-voice" checked><span class="track"></span></span>
+  </div>
+
+  <div class="setting-row">
+    <label for="opt-handsfree">Hands-free mode<small>Mic stays open after replies (up to 20s of silence) — and you can talk over Bloop to interrupt</small></label>
+    <span class="switch"><input type="checkbox" id="opt-handsfree" checked><span class="track"></span></span>
+  </div>
+
+  <div class="setting-row">
+    <label for="opt-sfx">Sound effects<small>Little blips when listening starts/stops</small></label>
+    <span class="switch"><input type="checkbox" id="opt-sfx" checked><span class="track"></span></span>
+  </div>
+
+  <div class="setting-row">
+    <label for="voice-select">Voice</label>
+    <select id="voice-select" aria-label="Choose a voice"><option>Default</option></select>
+  </div>
+
+  <div class="setting-row">
+    <label for="groq-key">Your own Groq API key<small>Optional — Bloop already has a built-in brain. Add your own key to skip shared rate limits.</small></label>
+    <input type="password" id="groq-key" placeholder="gsk_…" autocomplete="off" spellcheck="false">
+  </div>
+
+  <div class="setting-row">
+    <label>Account<small id="account-email"></small></label>
+    <button id="logout-btn">Log out</button>
+  </div>
+
+  <button id="clear-chat-btn">🗑 Clear chat history</button>
+  <div id="settings-about">Bloop v1.0 · free AI via pollinations.ai · voice by your browser</div>
+</div>
+
+<!-- ================= LOGIN ================= -->
+<div id="auth-screen">
+  <div id="auth-card">
+    <div id="auth-blob"><span class="smile"></span></div>
+    <h1 id="auth-title">Welcome to Bloop!</h1>
+    <div class="sub" id="auth-sub">Sign in to start chatting with your blob buddy</div>
+    <form id="auth-form" autocomplete="on">
+      <input type="text" id="auth-name" placeholder="Your name (optional)" maxlength="40" hidden>
+      <input type="email" id="auth-email" placeholder="Email" required autocomplete="email">
+      <input type="password" id="auth-password" placeholder="Password" required minlength="4" autocomplete="current-password">
+      <div id="auth-error"></div>
+      <button type="submit" id="auth-submit">Sign in</button>
+    </form>
+    <div id="auth-toggle">New here? <button type="button" id="auth-switch">Create an account</button></div>
+    <div id="auth-note">Accounts live only in this browser on this device — Bloop has no server, so nothing is ever uploaded.</div>
+  </div>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script>
+"use strict";
+/* ============================================================
+   BLOOP — application logic
+   Sections:
+     1. DOM refs & app state
+     2. Settings + chat persistence (localStorage)
+     3. Chat rendering
+     4. Sound effects (Web Audio blips)
+     5. Blob animation engine (one rAF loop drives everything)
+     6. Microphone volume analysis
+     7. Speech recognition (talk to Bloop)
+     8. Text-to-speech (Bloop talks back)
+     9. AI backend (free Pollinations API + offline fallback)
+    10. Conversation flow & event wiring
+   ============================================================ */
+
+/* ---------- 1. DOM refs & app state ---------- */
+const $ = (id) => document.getElementById(id);
+const els = {
+  body: document.body,
+  status: $("status"), transcript: $("transcript"),
+  chat: $("chat"), emptyHint: $("empty-hint"),
+  composer: $("composer"), input: $("text-input"),
+  micBtn: $("mic-btn"), sendBtn: $("send-btn"),
+  settingsBtn: $("settings-btn"), settingsPanel: $("settings-panel"),
+  settingsBackdrop: $("settings-backdrop"),
+  optVoice: $("opt-voice"), optHandsfree: $("opt-handsfree"), optSfx: $("opt-sfx"),
+  voiceSelect: $("voice-select"), groqKey: $("groq-key"), clearChatBtn: $("clear-chat-btn"),
+  toast: $("toast"),
+};
+
+// App-wide state. `state` is one of: idle | listening | thinking | speaking
+const app = {
+  state: "idle",
+  history: [],          // [{role:"user"|"assistant", content, offline?}]
+  micLevel: 0,          // smoothed mic volume 0..1
+  mouthOpen: 0,         // smoothed mouth openness 0..1
+  mouthTarget: 0.15,
+  audioCtx: null,       // shared AudioContext (sfx + mic analysis)
+  analyser: null,
+  micStream: null,
+  recognition: null,
+  recognitionOK: "SpeechRecognition" in window || "webkitSpeechRecognition" in window,
+  finalTranscript: "",
+  pendingSend: false,   // guards against double-sends while thinking
+  voices: [],
+  // continuous-listening bookkeeping
+  silenceTimer: null,   // fires after 20s with no speech -> stop listening
+  listenUntil: 0,       // timestamp when the current silence window expires
+  manualStop: false,    // user (or timeout) stopped on purpose: don't auto-restart
+  ignoreBefore: 0,      // recognition results before this index are stale/echo
+  resultCount: 0,       // how many results the current session has produced
+  currentReplyNorm: "", // normalized text Bloop is speaking (echo filter)
+};
+
+const STATUS_TAGLINES = ["Hi, I'm Bloop! 💙", "What's on your mind?", "Ready when you are!", "Blub blub~ ask me anything!"];
+
+/* Central state switcher: updates body attribute (CSS reacts) + status text */
+function setState(next) {
+  app.state = next;
+  els.body.dataset.state = next;
+  els.status.classList.toggle("active", next !== "idle");
+  const dots = '<span class="dots"><span></span><span></span><span></span></span>';
+  switch (next) {
+    case "listening": els.status.innerHTML = "Listening" + dots; break;
+    case "thinking":  els.status.innerHTML = "Thinking" + dots; break;
+    case "speaking":  els.status.innerHTML = "Speaking" + dots; break;
+    default:
+      els.status.textContent = STATUS_TAGLINES[Math.floor(Math.random() * STATUS_TAGLINES.length)];
+      els.transcript.hidden = true;
+  }
+}
+
+function toast(msg, ms = 3200) {
+  els.toast.textContent = msg;
+  els.toast.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => els.toast.classList.remove("show"), ms);
+}
+
+/* ---------- 2. Persistence ---------- */
+/* LS_HISTORY is re-pointed to a per-account key at login so each person
+   sharing this browser gets their own conversation with Bloop. */
+let LS_HISTORY = "bloop.history";
+const LS_SETTINGS = "bloop.settings", LS_USERS = "bloop.users", LS_SESSION = "bloop.session";
+
+function loadSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem(LS_SETTINGS) || "{}");
+    els.optVoice.checked = s.voice !== false;
+    // Hands-free is ON by default since settings v2; settings saved before
+    // that carried an untouched `false`, so migrate them to the new default
+    els.optHandsfree.checked = s.v >= 2 ? s.handsfree !== false : true;
+    els.optSfx.checked = s.sfx !== false;
+    if (s.voiceName) els.voiceSelect.dataset.saved = s.voiceName;
+    // API key lives ONLY in this browser's localStorage — never in the code
+    if (s.groqKey) els.groqKey.value = s.groqKey;
+  } catch { /* corrupt settings -> defaults */ }
+}
+function saveSettings() {
+  localStorage.setItem(LS_SETTINGS, JSON.stringify({
+    v: 2,
+    voice: els.optVoice.checked,
+    handsfree: els.optHandsfree.checked,
+    sfx: els.optSfx.checked,
+    voiceName: els.voiceSelect.value,
+    groqKey: els.groqKey.value.trim(),
+  }));
+}
+function loadHistory() {
+  try {
+    app.history = JSON.parse(localStorage.getItem(LS_HISTORY) || "[]");
+    if (!Array.isArray(app.history)) app.history = [];
+  } catch { app.history = []; }
+  app.history.forEach((m) => renderMessage(m, false));
+  scrollChat(false);
+}
+function saveHistory() {
+  // Cap stored history so localStorage never fills up
+  if (app.history.length > 200) app.history = app.history.slice(-200);
+  localStorage.setItem(LS_HISTORY, JSON.stringify(app.history));
+}
+
+/* ---------- 3. Chat rendering ---------- */
+function renderMessage(msg, animate = true) {
+  if (els.emptyHint) { els.emptyHint.remove(); els.emptyHint = null; }
+  const div = document.createElement("div");
+  div.className = "msg " + (msg.role === "user" ? "user" : "ai") + (msg.offline ? " offline" : "");
+  div.textContent = msg.content;
+  if (!animate) div.style.animation = "none";
+  els.chat.appendChild(div);
+}
+function addMessage(role, content, offline = false) {
+  const msg = { role, content };
+  if (offline) msg.offline = true;
+  app.history.push(msg);
+  renderMessage(msg);
+  saveHistory();
+  scrollChat();
+}
+function scrollChat(smooth = true) {
+  els.chat.scrollTo({ top: els.chat.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+}
+
+/* ---------- 4. Sound effects ---------- */
+function getAudioCtx() {
+  if (!app.audioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) app.audioCtx = new AC();
+  }
+  if (app.audioCtx && app.audioCtx.state === "suspended") app.audioCtx.resume();
+  return app.audioCtx;
+}
+/* Tiny synth blip: frequency glides f0 -> f1 over `dur` seconds */
+function blip(f0, f1, dur = 0.15, type = "sine", vol = 0.12) {
+  if (!els.optSfx.checked) return;
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  try {
+    const osc = ctx.createOscillator(), gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(f0, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(f1, 1), ctx.currentTime + dur);
+    gain.gain.setValueAtTime(vol, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + dur + 0.02);
+  } catch { /* audio is a nice-to-have, never fatal */ }
+}
+const sfxListenStart = () => { blip(440, 880, 0.14); setTimeout(() => blip(660, 1100, 0.12), 90); };
+const sfxListenStop  = () => { blip(880, 440, 0.16); };
+const sfxDoneThinking = () => { blip(700, 1000, 0.1, "triangle"); setTimeout(() => blip(1000, 1400, 0.12, "triangle"), 80); };
+
+/* ---------- 5. Blob animation engine ---------- */
+/* One rAF loop drives squish, glow and mouth via CSS custom properties.
+   CSS keyframes handle the ambient motion; JS layers the reactive part. */
+function animateBlob() {
+  requestAnimationFrame(animateBlob);
+  const st = document.documentElement.style;
+  const now = performance.now();
+
+  // --- mic level (set by the analyser loop below) drives listening squish ---
+  let sx = 1, sy = 1, glow = 0.35;
+  if (app.state === "listening") {
+    const v = app.micLevel;
+    sx = 1 + v * 0.30;                 // fatter…
+    sy = 1 - v * 0.24;                 // …and shorter = squish!
+    glow = 0.5 + v * 0.5;              // gentle cyan glow follows the voice
+  } else if (app.state === "thinking") {
+    glow = 0.45 + 0.25 * (0.5 + 0.5 * Math.sin(now / 300));   // soft pulse
+  } else if (app.state === "speaking") {
+    glow = 0.45 + app.mouthOpen * 0.3;
+    sx = 1 + app.mouthOpen * 0.03;     // tiny body reaction to talking
+    sy = 1 - app.mouthOpen * 0.03;
+  }
+
+  // --- mouth ---
+  if (app.state === "speaking") {
+    // Natural-ish chatter: layered sines + random target pulses from TTS boundaries
+    const chatter = 0.35 + 0.65 * Math.abs(Math.sin(now / 90) * 0.6 + Math.sin(now / 41) * 0.4);
+    app.mouthTarget = Math.min(1, chatter * app.speakEnvelope);
+  } else if (app.state === "listening") {
+    app.mouthTarget = 0.1;
+  } else if (app.state === "thinking") {
+    app.mouthTarget = 0.05;
+  } else {
+    app.mouthTarget = 0.15;            // relaxed little smile
+  }
+  app.mouthOpen += (app.mouthTarget - app.mouthOpen) * 0.35;   // smoothing
+
+  st.setProperty("--squish-x", sx.toFixed(3));
+  st.setProperty("--squish-y", sy.toFixed(3));
+  st.setProperty("--glow", glow.toFixed(3));
+  st.setProperty("--mouth-open", app.mouthOpen.toFixed(3));
+}
+app.speakEnvelope = 1;   // dips between words (updated by TTS boundary events)
+requestAnimationFrame(animateBlob);
+
+/* Random blinking (skipped while speaking — eyes are squinting then) */
+(function blinkLoop() {
+  const delay = 2200 + Math.random() * 3500;
+  setTimeout(() => {
+    if (app.state !== "speaking") {
+      document.querySelectorAll(".eye").forEach((e) => e.classList.add("blink"));
+      setTimeout(() => document.querySelectorAll(".eye").forEach((e) => e.classList.remove("blink")), 140);
+      // occasional double-blink, because it's cute
+      if (Math.random() < 0.25) setTimeout(() => {
+        document.querySelectorAll(".eye").forEach((e) => e.classList.add("blink"));
+        setTimeout(() => document.querySelectorAll(".eye").forEach((e) => e.classList.remove("blink")), 140);
+      }, 280);
+    }
+    blinkLoop();
+  }, delay);
+})();
+
+/* ---------- 6. Microphone volume analysis ---------- */
+async function startMicAnalysis() {
+  const ctx = getAudioCtx();
+  if (!ctx || !navigator.mediaDevices?.getUserMedia) return;
+  app.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const src = ctx.createMediaStreamSource(app.micStream);
+  app.analyser = ctx.createAnalyser();
+  app.analyser.fftSize = 512;
+  src.connect(app.analyser);          // analysis only — never routed to speakers
+
+  const buf = new Uint8Array(app.analyser.fftSize);
+  (function measure() {
+    if (!app.analyser) return;        // stopped
+    app.analyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) { const d = (buf[i] - 128) / 128; sum += d * d; }
+    const rms = Math.sqrt(sum / buf.length);
+    const target = Math.min(1, rms * 6);              // boost quiet mics
+    app.micLevel += (target - app.micLevel) * 0.3;    // smooth
+    requestAnimationFrame(measure);
+  })();
+}
+function stopMicAnalysis() {
+  if (app.micStream) { app.micStream.getTracks().forEach((t) => t.stop()); app.micStream = null; }
+  app.analyser = null;
+  app.micLevel = 0;
+}
+
+/* ---------- 7. Speech recognition ----------
+   Continuous session with our own 20s silence window: the browser engine
+   loves to give up after a few quiet seconds, so we quietly restart it
+   until LISTEN_WINDOW_MS of real silence has passed. In hands-free mode
+   the mic also stays open WHILE Bloop talks, so you can interrupt him —
+   an echo filter stops him from "hearing himself" through the speakers. */
+const LISTEN_WINDOW_MS = 20000;
+
+const normalizeSpeech = (s) =>
+  s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+
+/* (Re)arm the 20s no-speech countdown; every heard word extends it */
+function armSilenceTimer() {
+  clearTimeout(app.silenceTimer);
+  app.listenUntil = Date.now() + LISTEN_WINDOW_MS;
+  app.silenceTimer = setTimeout(() => {
+    if (app.state === "listening") stopListening();   // 20s of silence: sleep
+  }, LISTEN_WINDOW_MS);
+}
+
+function endListeningUI() {
+  clearTimeout(app.silenceTimer);
+  stopMicAnalysis();
+  els.micBtn.classList.remove("recording");
+}
+
+function setupRecognition() {
+  if (!app.recognitionOK) {
+    els.micBtn.classList.add("unsupported");
+    els.micBtn.title = "Speech recognition isn't supported in this browser";
+    return;
+  }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const rec = new SR();
+  rec.lang = navigator.language || "en-US";
+  rec.continuous = true;        // we manage the stop ourselves
+  rec.interimResults = true;    // live transcript while speaking
+
+  rec.onstart = () => { app.ignoreBefore = 0; app.resultCount = 0; };
+
+  rec.onresult = (ev) => {
+    app.resultCount = ev.results.length;
+    let interim = "", finals = "";
+    for (let i = app.ignoreBefore; i < ev.results.length; i++) {
+      const res = ev.results[i];
+      if (res.isFinal) finals += res[0].transcript;
+      else interim += res[0].transcript;
+    }
+    const combined = (finals + " " + interim).trim();
+
+    // Barge-in: Bloop is talking but the mic heard something
+    if (app.state === "speaking") {
+      const norm = normalizeSpeech(combined);
+      if (norm.length < 3 || app.currentReplyNorm.includes(norm)) {
+        app.ignoreBefore = ev.results.length;   // it's Bloop's own voice: discard
+        return;
+      }
+      voiceInterrupt();   // real human words: Bloop hushes and listens
+    }
+
+    if (app.state !== "listening") return;
+    armSilenceTimer();                          // heard speech: extend the window
+    els.transcript.textContent = "“" + combined + "”";
+    els.transcript.hidden = combined.length === 0;
+    if (finals.trim()) {                        // a finished sentence: send it
+      app.finalTranscript = finals;
+      try { rec.stop(); } catch {}
+    }
+  };
+
+  rec.onerror = (ev) => {
+    if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
+      toast("🎤 Microphone access was blocked. Allow it in your browser settings to talk to Bloop.");
+      app.manualStop = true;
+    }
+    // "no-speech" and "aborted" are normal with continuous restarts — stay quiet
+  };
+
+  rec.onend = () => {
+    const text = app.finalTranscript.trim();
+    app.finalTranscript = "";
+    if (app.state === "listening") {
+      if (text) {
+        endListeningUI(); sfxListenStop(); setState("idle");
+        handleUserMessage(text);
+      } else if (!app.manualStop && Date.now() < app.listenUntil) {
+        // Engine quit early during our 20s window — revive it quietly
+        setTimeout(() => { if (app.state === "listening") { try { rec.start(); } catch {} } }, 200);
+      } else {
+        endListeningUI(); sfxListenStop(); setState("idle");
+      }
+    } else if (app.state === "speaking" && els.optHandsfree.checked) {
+      // The barge-in watcher died mid-speech — revive it
+      setTimeout(() => { if (app.state === "speaking") { try { rec.start(); } catch {} } }, 250);
+    } else {
+      endListeningUI();
+    }
+    app.manualStop = false;
+  };
+  app.recognition = rec;
+}
+
+/* User spoke over Bloop: cut the TTS mid-sentence and keep listening.
+   The recognition session continues, so the interrupting words are kept. */
+function voiceInterrupt() {
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  setState("listening");            // before the utterance's onend fires
+  els.micBtn.classList.add("recording");
+  startMicAnalysis().catch(() => {});
+  armSilenceTimer();
+  sfxListenStart();
+}
+
+async function startListening() {
+  if (!app.recognitionOK) {
+    toast("🎤 Voice input needs Chrome, Edge or Safari — but you can always type!");
+    return;
+  }
+  if (app.state === "thinking") return;              // wait for the reply first
+  if (app.state === "speaking") stopSpeaking();      // mic tap = interrupt Bloop
+  try {
+    await startMicAnalysis();                        // volume-reactive squish
+  } catch {
+    toast("🎤 Bloop needs microphone permission to hear you.");
+    return;
+  }
+  app.manualStop = false;
+  app.finalTranscript = "";
+  try { app.recognition.start(); }
+  catch { app.ignoreBefore = app.resultCount; }      // already running (watcher): drop its stale results
+  els.transcript.textContent = ""; els.transcript.hidden = true;
+  els.micBtn.classList.add("recording");
+  setState("listening");
+  armSilenceTimer();
+  sfxListenStart();
+}
+function stopListening() {
+  app.manualStop = true;                             // don't auto-revive
+  if (app.recognition) { try { app.recognition.stop(); } catch {} }
+}
+
+/* ---------- 8. Text-to-speech ---------- */
+function populateVoices() {
+  if (!("speechSynthesis" in window)) return;
+  app.voices = speechSynthesis.getVoices();
+  if (!app.voices.length) return;
+  const saved = els.voiceSelect.dataset.saved;
+  els.voiceSelect.innerHTML = "";
+  // Friendly ordering: local English voices first
+  const sorted = [...app.voices].sort((a, b) =>
+    (b.lang.startsWith("en") - a.lang.startsWith("en")) || a.name.localeCompare(b.name));
+  for (const v of sorted) {
+    const opt = document.createElement("option");
+    opt.value = v.name;
+    opt.textContent = `${v.name} (${v.lang})`;
+    if (v.name === saved) opt.selected = true;
+    els.voiceSelect.appendChild(opt);
+  }
+}
+
+function speak(text) {
+  if (!("speechSynthesis" in window) || !els.optVoice.checked) {
+    setState("idle");
+    maybeHandsfreeResume();
+    return;
+  }
+  // Don't read code blocks aloud — nobody wants "backtick backtick backtick def"
+  const spoken = text.replace(/```[\s\S]*?```/g, " …the code is in the chat!… ").trim();
+  speechSynthesis.cancel();     // clear any stragglers
+  const utt = new SpeechSynthesisUtterance(spoken);
+  const chosen = app.voices.find((v) => v.name === els.voiceSelect.value);
+  if (chosen) utt.voice = chosen;
+  utt.rate = 1.03;
+  utt.pitch = 1.15;             // Bloop is smol and cheerful
+
+  utt.onstart = () => {
+    app.speakEnvelope = 1;
+    setState("speaking");
+    app.currentReplyNorm = normalizeSpeech(spoken);   // for the echo filter
+    // Hands-free: keep an ear open so the user can talk over Bloop
+    if (els.optHandsfree.checked && app.recognitionOK) {
+      try { app.recognition.start(); } catch { /* already running — fine */ }
+    }
+  };
+  // Word boundaries: briefly close the mouth between words for natural motion
+  utt.onboundary = () => {
+    app.speakEnvelope = 0.25;
+    clearTimeout(speak._env);
+    speak._env = setTimeout(() => { app.speakEnvelope = 1; }, 70);
+  };
+  const finish = () => {
+    if (app.state === "speaking") setState("idle");
+    maybeHandsfreeResume();
+  };
+  utt.onend = finish;
+  utt.onerror = finish;
+  app.currentUtterance = utt;   // keep a ref: some browsers GC utterances mid-speech
+  speechSynthesis.speak(utt);
+}
+function stopSpeaking() {
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  if (app.state === "speaking") setState("idle");
+}
+function maybeHandsfreeResume() {
+  if (els.optHandsfree.checked && app.recognitionOK && app.state === "idle") {
+    setTimeout(() => { if (app.state === "idle") startListening(); }, 450);
+  }
+}
+
+/* ---------- 9. AI backend ---------- */
+/* Primary: Pollinations.AI — a genuinely free, no-key OpenAI-compatible API.
+   Fallback: a small offline brain so Bloop always answers something. */
+const SYSTEM_PROMPT =
+  "You are Bloop, a cute, cheerful cyan blob assistant with a bouncy personality. " +
+  "Be warm, playful and helpful. Keep replies short (1-3 sentences) because they are " +
+  "read aloud, unless the user clearly needs a longer answer (like writing code). " +
+  "Plain text only — no markdown formatting — except triple-backtick fences around any code you share.";
+
+/* fetch with a hard timeout so a hung request can't stall the UI */
+async function fetchWithTimeout(url, options = {}, ms = 14000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* The anonymous Pollinations tier is only reliable with SINGLE-message
+   payloads (multi-message and `system`-role requests hit broken backend
+   paths), so the persona + recent conversation are folded into one prompt. */
+function buildPrompt() {
+  const recent = app.history.slice(-10)
+    .map((m) => (m.role === "user" ? "User: " : "Bloop: ") + m.content)
+    .join("\n");
+  return "[Instructions] " + SYSTEM_PROMPT +
+    "\n\nConversation so far:\n" + recent +
+    "\n\nReply as Bloop (reply text only):";
+}
+
+/* Built-in shared Groq key so the app works out of the box for everyone.
+   It's double-base64 encoded to keep it out of casual view — but to be
+   clear: this is obfuscation, NOT encryption. Anyone determined can decode
+   it, because the browser itself has to. The key owner can revoke it at
+   console.groq.com any time if it gets abused. */
+const SHARED_KEY_PACKED = "WjNOclgzWjNWR3RWWlRSaFozQlRZVVV3VW5wclVrMUNWMGRrZVdJelJsazFTR3RRU21Kd2RFcDNNMHh4YTJaNU1HSXpVSE53VmxnPQ==";
+function sharedKey() {
+  try { return atob(atob(SHARED_KEY_PACKED)); } catch { return ""; }
+}
+
+/* Groq: fast and reliable; supports proper multi-message chat format.
+   Uses the user's own key from Settings when present, else the shared one. */
+async function fetchAIReplyGroq(key) {
+  const messages = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...app.history.slice(-12).map((m) => ({ role: m.role, content: m.content })),
+  ];
+  const res = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
+    body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages, max_tokens: 600 }),
+  }, 20000);
+  if (res.status === 401 || res.status === 403) {
+    // Only nag about the key if it's one the user typed in themselves
+    if (els.groqKey.value.trim()) toast("🔑 Your Groq API key was rejected — double-check it in Settings.");
+    throw new Error("invalid Groq key");
+  }
+  if (!res.ok) throw new Error("Groq HTTP " + res.status);
+  const data = await res.json();
+  const reply = data?.choices?.[0]?.message?.content?.trim();
+  if (!reply) throw new Error("empty Groq reply");
+  return reply;
+}
+
+/* Primary request: OpenAI-compatible chat endpoint */
+async function fetchAIReplyPost() {
+  const res = await fetchWithTimeout("https://text.pollinations.ai/openai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "openai", messages: [{ role: "user", content: buildPrompt() }] }),
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  const reply = data?.choices?.[0]?.message?.content?.trim();
+  if (!reply) throw new Error("empty reply");
+  return reply;
+}
+
+/* Secondary request: simple GET endpoint */
+async function fetchAIReplyGet() {
+  const res = await fetchWithTimeout(
+    "https://text.pollinations.ai/" + encodeURIComponent(buildPrompt()), {}, 10000);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const reply = (await res.text()).trim();
+  if (!reply || reply.startsWith("{")) throw new Error("bad reply");   // JSON body = error page
+  return reply;
+}
+
+/* The free API is occasionally flaky, so race the two endpoints instead of
+   retrying sequentially: POST fires immediately; if it hasn't answered within
+   4s the GET endpoint launches too, and the first success wins. Worst case
+   (both dead) resolves in ~15s and the offline brain takes over. */
+async function fetchAIReply() {
+  let postWon = false;
+  const post = fetchAIReplyPost().then((t) => { postWon = true; return t; });
+  const get = new Promise((r) => setTimeout(r, 4000)).then(() =>
+    postWon ? Promise.reject(new Error("not needed")) : fetchAIReplyGet());
+  const text = await Promise.any([post, get]);   // rejects only if BOTH fail
+  return { text, offline: false };
+}
+
+/* Offline mini-brain: pattern-matched responses so the app degrades gracefully */
+function offlineReply(userText) {
+  const t = userText.toLowerCase();
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  if (/\b(hi|hello|hey|yo|howdy)\b/.test(t))
+    return pick(["Hii! I'm Bloop! I'm offline right now, but still happy to see you! 💙",
+                 "Hello hello! My internet brain is napping, but I'm still here bouncing!"]);
+  if (/how are you|how's it going|whats up|what's up/.test(t))
+    return pick(["I'm feeling extra squishy today! Though my big brain is offline, hehe.",
+                 "Bouncy as ever! Can't reach the internet right now though. 🫧"]);
+  if (/your name|who are you|what are you/.test(t))
+    return "I'm Bloop — a cyan blob buddy who lives in your browser! Right now I'm in offline mode.";
+  if (/\bjoke\b|funny/.test(t))
+    return pick(["Why don't blobs ever get lost? Because we always find our way… we just roll with it! 🫧",
+                 "What's a blob's favorite music? Squish-hop!",
+                 "I tried to tell a chemistry joke… but there was no reaction. Blub!"]);
+  if (/\btime\b/.test(t))
+    return "My squishy watch says it's " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + "!";
+  if (/\bdate\b|today/.test(t))
+    return "Today is " + new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }) + "! A great day to bounce.";
+  if (/thank/.test(t))
+    return pick(["You're so welcome! *happy wiggle*", "Anytime! That's what blob buddies are for! 💙"]);
+  if (/\b(bye|goodbye|good night|goodnight|see you)\b/.test(t))
+    return pick(["Byee! Come bounce with me again soon! 🫧", "See you later! I'll be here, gently wobbling."]);
+  if (/\blove\b/.test(t))
+    return "Aww! Blob hugs for you! 🫂💙";
+  return pick([
+    "Ooh, interesting! My internet brain is offline right now, so I can't think super hard — but I'd love to chat once I'm reconnected!",
+    "I wish I could answer that properly, but I can't reach my AI brain right now. Check your connection and ask me again? 💙",
+    "Blub! That sounds fun, but offline-me is a bit simple. Reconnect me to the internet for my full blobby wisdom!",
+  ]);
+}
+
+async function getAIReply(userText) {
+  if (!navigator.onLine) return { text: offlineReply(userText), offline: true };
+  // Brain priority: Groq (own key, else shared key) → free API → offline
+  const key = els.groqKey.value.trim() || sharedKey();
+  if (key) {
+    try {
+      return { text: await fetchAIReplyGroq(key), offline: false };
+    } catch (err) {
+      console.warn("Groq unavailable, trying free backend:", err);
+    }
+  }
+  try {
+    return await fetchAIReply();
+  } catch (err) {
+    console.warn("AI backend unavailable, using offline brain:", err);
+    return { text: offlineReply(userText), offline: true };
+  }
+}
+
+/* ---------- 9b. Accounts (client-side only) ----------
+   IMPORTANT HONESTY NOTE: this is a static site with no server, so these
+   "accounts" exist only in each visitor's own browser. Passwords are salted
+   + SHA-256 hashed before storage and never leave the device. This is a
+   personalization feature, not real security. */
+const authEls = {
+  screen: $("auth-screen"), title: $("auth-title"), sub: $("auth-sub"),
+  form: $("auth-form"), name: $("auth-name"), email: $("auth-email"),
+  password: $("auth-password"), error: $("auth-error"), submit: $("auth-submit"),
+  switchBtn: $("auth-switch"), toggle: $("auth-toggle"),
+  accountEmail: $("account-email"), logoutBtn: $("logout-btn"),
+};
+let authMode = "signin";   // or "signup"
+let currentUser = null;    // email of the signed-in user
+
+function getUsers() {
+  try { return JSON.parse(localStorage.getItem(LS_USERS) || "{}"); } catch { return {}; }
+}
+
+async function hashPassword(salt, password) {
+  if (crypto?.subtle) {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(salt + "::" + password));
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  // Tiny fallback hash for ancient browsers without SubtleCrypto
+  let h = 5381;
+  for (const c of salt + "::" + password) h = ((h * 33) ^ c.charCodeAt(0)) >>> 0;
+  return "djb2_" + h.toString(16);
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  const signup = mode === "signup";
+  authEls.name.hidden = !signup;   // shown on signup, but always optional
+  authEls.title.textContent = signup ? "Join Bloop!" : "Welcome to Bloop!";
+  authEls.sub.textContent = signup ? "Make an account for you and your blob buddy" : "Sign in to start chatting with your blob buddy";
+  authEls.submit.textContent = signup ? "Create account" : "Sign in";
+  authEls.toggle.firstChild.textContent = signup ? "Already have an account? " : "New here? ";
+  authEls.switchBtn.textContent = signup ? "Sign in" : "Create an account";
+  authEls.password.autocomplete = signup ? "new-password" : "current-password";
+  authEls.error.textContent = "";
+}
+
+/* Enter the app as `email`: point history at their slot and greet them */
+function enterApp(email, isNew) {
+  currentUser = email;
+  localStorage.setItem(LS_SESSION, email);
+  LS_HISTORY = "bloop.history." + email;
+  // One-time migration: adopt any pre-account chat history
+  if (!localStorage.getItem(LS_HISTORY) && localStorage.getItem("bloop.history"))
+    localStorage.setItem(LS_HISTORY, localStorage.getItem("bloop.history"));
+  loadHistory();
+  authEls.accountEmail.textContent = email;
+  authEls.screen.classList.add("hidden");
+  const name = getUsers()[email]?.name || "friend";
+  toast(isNew ? `🎉 Welcome to Bloop, ${name}!` : `💙 Welcome back, ${name}!`);
+}
+
+authEls.form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  authEls.error.textContent = "";
+  const email = authEls.email.value.trim().toLowerCase();
+  const password = authEls.password.value;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { authEls.error.textContent = "That email doesn't look right."; return; }
+  if (password.length < 4) { authEls.error.textContent = "Password needs at least 4 characters."; return; }
+
+  const users = getUsers();
+  try {
+    if (authMode === "signup") {
+      if (users[email]) { authEls.error.textContent = "That email already has an account — sign in instead!"; return; }
+      const salt = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      users[email] = { name: authEls.name.value.trim() || "friend", salt, hash: await hashPassword(salt, password) };
+      localStorage.setItem(LS_USERS, JSON.stringify(users));
+      enterApp(email, true);
+    } else {
+      const user = users[email];
+      if (!user || (await hashPassword(user.salt, password)) !== user.hash) {
+        authEls.error.textContent = "Wrong email or password. (New here? Create an account!)";
+        return;
+      }
+      enterApp(email, false);
+    }
+  } catch (err) {
+    authEls.error.textContent = "Something went wrong — try again?";
+    console.error("auth error:", err);
+  }
+});
+
+authEls.switchBtn.addEventListener("click", () => setAuthMode(authMode === "signin" ? "signup" : "signin"));
+
+authEls.logoutBtn.addEventListener("click", () => {
+  stopSpeaking();
+  if (app.state === "listening") stopListening();
+  localStorage.removeItem(LS_SESSION);
+  location.reload();          // clean slate back to the login screen
+});
+
+/* On load: skip the login screen if this browser already has a session */
+function initAuth() {
+  const remembered = localStorage.getItem(LS_SESSION);
+  const users = getUsers();
+  if (remembered && users[remembered]) {
+    currentUser = remembered;
+    LS_HISTORY = "bloop.history." + remembered;
+    loadHistory();
+    authEls.accountEmail.textContent = remembered;
+    authEls.screen.classList.add("hidden");
+  } else {
+    // No account yet at all? Default to the signup form
+    if (!Object.keys(users).length) setAuthMode("signup");
+  }
+}
+
+/* ---------- 10. Conversation flow & event wiring ---------- */
+async function handleUserMessage(text) {
+  text = text.trim();
+  if (!text || app.pendingSend) return;
+  app.pendingSend = true;
+  els.sendBtn.disabled = true;
+  els.transcript.hidden = true;
+
+  addMessage("user", text);
+  setState("thinking");
+
+  // Reassure the user if the free API is being slow today
+  const slowTimer = setTimeout(() => {
+    if (app.state === "thinking")
+      els.status.innerHTML = 'Still thinking… free AI can be slow! <span class="dots"><span></span><span></span><span></span></span>';
+  }, 7000);
+
+  const { text: reply, offline } = await getAIReply(text);
+  clearTimeout(slowTimer);
+
+  sfxDoneThinking();
+  addMessage("assistant", reply, offline);
+  app.pendingSend = false;
+  els.sendBtn.disabled = false;
+
+  if (els.optVoice.checked && "speechSynthesis" in window) speak(reply);
+  else { setState("idle"); maybeHandsfreeResume(); }
+}
+
+/* Composer: typing */
+els.composer.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = els.input.value;
+  if (!text.trim()) return;
+  els.input.value = "";
+  getAudioCtx();                       // unlock audio on user gesture
+  if (app.state === "listening") stopListening();
+  if (app.state === "speaking") stopSpeaking();
+  handleUserMessage(text);
+});
+
+/* Mic button: tap to talk, tap again to stop */
+els.micBtn.addEventListener("click", () => {
+  getAudioCtx();
+  if (app.state === "listening") stopListening();
+  else startListening();
+});
+
+/* Settings open/close */
+function toggleSettings(open) {
+  els.body.classList.toggle("settings-open", open);
+}
+els.settingsBtn.addEventListener("click", () => toggleSettings(true));
+els.settingsBackdrop.addEventListener("click", () => toggleSettings(false));
+addEventListener("keydown", (e) => { if (e.key === "Escape") toggleSettings(false); });
+
+/* Settings changes */
+[els.optVoice, els.optHandsfree, els.optSfx, els.voiceSelect, els.groqKey].forEach((el) =>
+  el.addEventListener("change", () => {
+    saveSettings();
+    if (el === els.optVoice && !el.checked) stopSpeaking();
+    if (el === els.groqKey && el.value.trim()) toast("🔑 Groq key saved in this browser. Bloop's big brain is ON!");
+  })
+);
+
+els.clearChatBtn.addEventListener("click", () => {
+  if (!confirm("Clear the whole conversation with Bloop?")) return;
+  app.history = [];
+  localStorage.removeItem(LS_HISTORY);
+  els.chat.innerHTML = "";
+  els.emptyHint = document.createElement("div");
+  els.emptyHint.id = "empty-hint";
+  els.emptyHint.innerHTML = "Say hi to <b>Bloop</b>! 👋<br>Type a message or tap the mic to talk.";
+  els.chat.appendChild(els.emptyHint);
+  toggleSettings(false);
+  toast("Chat history cleared! Fresh start! ✨");
+});
+
+/* Voices arrive asynchronously in most browsers */
+if ("speechSynthesis" in window) {
+  populateVoices();
+  speechSynthesis.onvoiceschanged = populateVoices;
+}
+
+/* Stop the mic cleanly if the tab is hidden mid-listen */
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && app.state === "listening") stopListening();
+});
+
+/* ---------- Init ---------- */
+loadSettings();
+setupRecognition();
+setState("idle");
+initAuth();   // shows login, or restores the remembered session + history
+</script>
+</body>
+</html>
